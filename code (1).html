@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Magnetic Mapping Simulation</title>
+<style>
+    body {
+        font-family: sans-serif;
+        margin: 20px;
+        background-color: #f4f4f4;
+        color: #333;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+    .title-section {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    .title-section h1 {
+        margin-bottom: 5px;
+    }
+    .container {
+        display: flex;
+        flex-direction: row;
+        gap: 20px;
+        width: 95%;
+        max-width: 1000px;
+    }
+    .controls {
+        width: 250px;
+        padding: 15px;
+        background-color: #fff;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        height: fit-content;
+    }
+    .controls label {
+        font-weight: bold;
+        margin-right: 5px;
+    }
+    .controls select, .controls button {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 15px;
+        border-radius: 4px;
+        border: 1px solid #ccc;
+        box-sizing: border-box;
+    }
+    .controls p {
+        font-size: 0.9em;
+        line-height: 1.4;
+        margin-bottom: 10px;
+    }
+    #simulationCanvas {
+        border: 1px solid black;
+        background-color: #fff;
+        cursor: none; /* Hide default cursor when over canvas */
+        box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    .config-selector-div {
+        display: flex;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+    .config-selector-div select {
+        flex-grow: 1;
+        margin-bottom: 0; /* Override specific margin */
+    }
+
+</style>
+</head>
+<body>
+
+<div class="title-section">
+    <h1>Magnetic Mapping</h1>
+    <p>Use the compass to reveal the hidden fields</p>
+</div>
+
+<div class="container">
+    <div class="controls">
+        <div class="config-selector-div">
+            <label for="config-select">Configuration:</label>
+            <select id="config-select">
+                <option value="A">A</option>
+                <option value="B">B</option>
+                <option value="C">C</option>
+                <option value="D">D</option>
+                <option value="E">E</option>
+                <option value="F">F</option>
+            </select>
+        </div>
+        <p>Your cursor is a compass.</p>
+        <p>Click each time you wish to save the compass' direction.</p>
+        <p>Select the magnet field choice that most closely matches the hidden field lines.</p>
+        <button id="clear-arrows-btn">Clear Arrows</button>
+    </div>
+    <canvas id="simulationCanvas"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById('simulationCanvas');
+    const ctx = canvas.getContext('2d');
+    const configSelect = document.getElementById('config-select');
+    const clearArrowsBtn = document.getElementById('clear-arrows-btn');
+
+    const CANVAS_WIDTH = 700;
+    const CANVAS_HEIGHT = 450;
+    canvas.width = CANVAS_WIDTH;
+    canvas.height = CANVAS_HEIGHT;
+
+    const MAGNET_LENGTH = 100;
+    const MAGNET_WIDTH = 20;
+    const POLE_STRENGTH = 20000; // Arbitrary, scales field strength
+
+    let currentConfigKey = 'A';
+    let activeMagnets = [];
+    let savedArrows = [];
+    let mousePos = { x: 0, y: 0, onCanvas: false };
+    let currentCompassAngle = 0;
+
+    class Magnet {
+        constructor(centerX, centerY, angle, length, width, poleStrength) {
+            this.cx = centerX;
+            this.cy = centerY;
+            this.angle = angle; // Angle of the S-N axis
+            this.length = length;
+            this.width = width;
+            this.poleStrength = poleStrength;
+
+            // Calculate S and N pole positions
+            // S-pole is at (cx - L/2*cos, cy - L/2*sin)
+            // N-pole is at (cx + L/2*cos, cy + L/2*sin)
+            const halfL = this.length / 2;
+            this.sPole = {
+                x: this.cx - halfL * Math.cos(this.angle),
+                y: this.cy - halfL * Math.sin(this.angle),
+                strength: -this.poleStrength
+            };
+            this.nPole = {
+                x: this.cx + halfL * Math.cos(this.angle),
+                y: this.cy + halfL * Math.sin(this.angle),
+                strength: this.poleStrength
+            };
+        }
+
+        getPoleField(pole, px, py) {
+            const dx = px - pole.x;
+            const dy = py - pole.y;
+            const rSq = dx * dx + dy * dy;
+            if (rSq < 100) return { bx: 0, by: 0 }; // Avoid singularity near pole, or if inside magnet
+            
+            const r = Math.sqrt(rSq);
+            const Bmag = pole.strength / rSq;
+            
+            return {
+                bx: Bmag * (dx / r),
+                by: Bmag * (dy / r)
+            };
+        }
+
+        getField(px, py) {
+            const fieldS = this.getPoleField(this.sPole, px, py);
+            const fieldN = this.getPoleField(this.nPole, px, py);
+            return {
+                bx: fieldS.bx + fieldN.bx,
+                by: fieldS.by + fieldN.by
+            };
+        }
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.cx, this.cy);
+            ctx.rotate(this.angle);
+            
+            // South Pole (Blue)
+            ctx.fillStyle = 'blue';
+            ctx.fillRect(-this.length / 2, -this.width / 2, this.length / 2, this.width);
+            
+            // North Pole (Red)
+            ctx.fillStyle = 'red';
+            ctx.fillRect(0, -this.width / 2, this.length / 2, this.width);
+            
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(-this.length / 2, -this.width / 2, this.length, this.width);
+
+            ctx.restore();
+        }
+    }
+
+    const configurations = {
+        'A': () => [
+            new Magnet(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60, 0, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH), // Top S-N
+            new Magnet(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60, Math.PI, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH) // Bottom N-S
+        ],
+        'B': () => [
+            new Magnet(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60, 0, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH), // Top S-N
+            new Magnet(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60, 0, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH)  // Bottom S-N
+        ],
+        'C': () => [
+            new Magnet(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 - 60, Math.PI, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH), // Top N-S
+            new Magnet(CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 60, 0, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH)       // Bottom S-N
+        ],
+        'D': () => [ // Co-linear, attracting
+            new Magnet(CANVAS_WIDTH / 2 - MAGNET_LENGTH / 2 - 15, CANVAS_HEIGHT / 2, 0, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH), // Left S-N
+            new Magnet(CANVAS_WIDTH / 2 + MAGNET_LENGTH / 2 + 15, CANVAS_HEIGHT / 2, 0, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH)  // Right S-N
+        ],
+        'E': () => [ // Vertical, parallel, attracting
+            new Magnet(CANVAS_WIDTH / 2 - 50, CANVAS_HEIGHT / 2, Math.PI / 2, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH), // Left S(bottom)-N(top)
+            new Magnet(CANVAS_WIDTH / 2 + 50, CANVAS_HEIGHT / 2, -Math.PI / 2, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH) // Right N(bottom)-S(top)
+        ],
+        'F': () => [ // Co-linear, repelling
+            new Magnet(CANVAS_WIDTH / 2 - MAGNET_LENGTH / 2 - 15, CANVAS_HEIGHT / 2, 0, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH), // Left S-N
+            new Magnet(CANVAS_WIDTH / 2 + MAGNET_LENGTH / 2 + 15, CANVAS_HEIGHT / 2, Math.PI, MAGNET_LENGTH, MAGNET_WIDTH, POLE_STRENGTH) // Right N-S
+        ]
+    };
+
+    function setActiveConfiguration(configKey) {
+        currentConfigKey = configKey;
+        activeMagnets = configurations[configKey]();
+        savedArrows = [];
+        draw();
+    }
+
+    function calculateTotalField(px, py) {
+        let totalBx = 0;
+        let totalBy = 0;
+        for (const magnet of activeMagnets) {
+            // Check if point is inside this magnet (approx.)
+            // Simple bounding box check, not perfect for rotated magnets but good enough
+            const halfL = magnet.length / 2;
+            const halfW = magnet.width / 2;
+            
+            // Transform point to magnet's local coordinates
+            const localX = (px - magnet.cx) * Math.cos(-magnet.angle) - (py - magnet.cy) * Math.sin(-magnet.angle);
+            const localY = (px - magnet.cx) * Math.sin(-magnet.angle) + (py - magnet.cy) * Math.cos(-magnet.angle);
+
+            if (Math.abs(localX) < halfL && Math.abs(localY) < halfW) {
+                 // Inside or too close to magnet, field is complex / very strong. Zero it out for stability or show max.
+                 // For simplicity, let's just exclude this magnet's contribution or return a default.
+                 // This needs a more robust solution for points inside magnets.
+                 // For now, we'll rely on the getPoleField's rSq < 100 check.
+            }
+
+            const field = magnet.getField(px, py);
+            totalBx += field.bx;
+            totalBy += field.by;
+        }
+        return { bx: totalBx, by: totalBy };
+    }
+
+    function drawCompass(x, y, angle, isLive = false) {
+        const radius = isLive ? 15 : 10;
+        const arrowLength = isLive ? radius * 0.9 : radius * 0.8;
+        ctx.save();
+        ctx.translate(x, y);
+        
+        if (isLive) {
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, 2 * Math.PI);
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+        
+        ctx.rotate(angle);
+        
+        // Arrow body (grey tail)
+        ctx.beginPath();
+        ctx.moveTo(-arrowLength * 0.3, 0);
+        ctx.lineTo(arrowLength * 0.7, 0);
+        ctx.strokeStyle = 'grey';
+        ctx.lineWidth = isLive ? 3 : 2;
+        ctx.stroke();
+
+        // Arrow head (red tip)
+        ctx.beginPath();
+        ctx.moveTo(arrowLength, 0);
+        ctx.lineTo(arrowLength * 0.6, -arrowLength * 0.25);
+        ctx.lineTo(arrowLength * 0.6, arrowLength * 0.25);
+        ctx.closePath();
+        ctx.fillStyle = 'red';
+        ctx.fill();
+        
+        ctx.restore();
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        // Draw magnets
+        activeMagnets.forEach(magnet => magnet.draw());
+
+        // Draw saved arrows
+        savedArrows.forEach(arrow => {
+            drawCompass(arrow.x, arrow.y, arrow.angle, false);
+        });
+
+        // Draw live compass if mouse is on canvas
+        if (mousePos.onCanvas) {
+            const { bx, by } = calculateTotalField(mousePos.x, mousePos.y);
+            currentCompassAngle = Math.atan2(by, bx);
+            // Check if field is too weak (or bx,by are NaN/zero)
+             if (isNaN(currentCompassAngle) || (Math.abs(bx) < 1e-9 && Math.abs(by) < 1e-9)) {
+                // Don't draw if field is essentially zero or undefined
+            } else {
+                drawCompass(mousePos.x, mousePos.y, currentCompassAngle, true);
+            }
+        }
+        requestAnimationFrame(draw);
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mousePos.x = e.clientX - rect.left;
+        mousePos.y = e.clientY - rect.top;
+        mousePos.onCanvas = true;
+        // Redraw is handled by requestAnimationFrame loop
+    });
+
+    canvas.addEventListener('mouseenter', () => {
+        mousePos.onCanvas = true;
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        mousePos.onCanvas = false;
+    });
+
+    canvas.addEventListener('click', () => {
+        if (mousePos.onCanvas) {
+            const { bx, by } = calculateTotalField(mousePos.x, mousePos.y);
+            const angle = Math.atan2(by, bx);
+             if (isNaN(angle) || (Math.abs(bx) < 1e-9 && Math.abs(by) < 1e-9)) {
+                // Don't save arrow if field is zero or undefined
+            } else {
+                savedArrows.push({ x: mousePos.x, y: mousePos.y, angle: angle });
+            }
+        }
+    });
+
+    configSelect.addEventListener('change', (e) => {
+        setActiveConfiguration(e.target.value);
+    });
+
+    clearArrowsBtn.addEventListener('click', () => {
+        savedArrows = [];
+    });
+
+    // Initial setup
+    setActiveConfiguration(configSelect.value);
+    draw(); // Start the animation loop
+</script>
+
+</body>
+</html>
